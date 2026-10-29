@@ -193,7 +193,7 @@ PtpFilterInputRequestCompletionCallback(
 	PUCHAR responseBuffer;
 
 	LARGE_INTEGER currentTSC;
-	LONGLONG tSCDelta;
+	LARGE_INTEGER tSCFrequency;
 
 	PUCHAR mt1FirstReport = NULL;
 	size_t mt1FirstLength = 0;
@@ -258,14 +258,17 @@ PtpFilterInputRequestCompletionCallback(
 		goto cleanup;
 	}
 
-	// Report header
+	// Report header. Zeroed so the padding bits do not carry kernel stack contents to user mode
+	RtlZeroMemory(&ptpOutputReport, sizeof(ptpOutputReport));
+	RtlZeroMemory(&mt1FirstOutput, sizeof(mt1FirstOutput));
 	ptpOutputReport.ReportID = REPORTID_MULTITOUCH;
 	ptpOutputReport.IsButtonClicked = 0;
 
-	// Capture current timestamp and get input delta in 100us unit
-	KeQueryPerformanceCounter(&currentTSC);
-	tSCDelta = (currentTSC.QuadPart - deviceContext->LastReportTime.QuadPart) / 100;
-	ptpOutputReport.ScanTime = (tSCDelta >= 0xFF) ? 0xFF : (USHORT)tSCDelta;
+	// Capture current timestamp
+	// The argument receives the counter frequency, the counter itself is returned. PTP wants a running
+	// clock in 100us units that wraps at 16 bits, not a delta: Windows derives gesture speed from it.
+	currentTSC = KeQueryPerformanceCounter(&tSCFrequency);
+	ptpOutputReport.ScanTime = (USHORT)(currentTSC.QuadPart / max(tSCFrequency.QuadPart / 10000, 1));
 	deviceContext->LastReportTime.QuadPart = currentTSC.QuadPart;
 
 	// Report required content
